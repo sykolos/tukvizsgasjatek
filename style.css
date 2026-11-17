@@ -135,3 +135,11 @@ input[type=date]{font:inherit;padding:10px;border-radius:10px;border:1.5px solid
 .cloze select.right{border-color:var(--ok);background:var(--okbg)}
 .cloze select.wrong{border-color:var(--bad);background:var(--badbg)}
 .clfix{display:inline-block;color:var(--ok);font-weight:700;font-size:14px;margin:0 4px}
+.spk{flex:0 0 auto;border:1.5px solid var(--line);background:var(--card);border-radius:12px;width:44px;height:44px;font-size:20px;cursor:pointer}
+.spk.on{background:var(--brand);border-color:var(--brand);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.6}}
+.qtextrow{display:flex;gap:10px;align-items:flex-start}
+.qtextrow .qtext{flex:1}
+.sel{width:100%;font:inherit;padding:10px;border-radius:10px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);margin-bottom:10px}
+.player .btn{font-size:20px}
+details summary{cursor:pointer;margin:6px 0}

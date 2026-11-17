@@ -10,7 +10,7 @@ const KEY = 'tuk-gyakorlo-v1';
 
 /* ---------------- állapot ---------------- */
 const DEF = { q: {}, tet: {}, xp: 0, streak: 0, lastDay: null, days: {}, best: 0,
-  settings: { len: 8, exam: '' }, sessions: 0 };
+  settings: { len: 8, exam: '', rate: 1, voice: '', pause: 5 }, sessions: 0 };
 let S = load();
 function load() {
   try { const s = JSON.parse(localStorage.getItem(KEY)); if (s) return Object.assign(structuredClone(DEF), s, { settings: Object.assign({}, DEF.settings, s.settings || {}) }); } catch (e) {}
@@ -80,11 +80,69 @@ function buildSession(opts) {
   return shuffle(picked).map(q => q.id);
 }
 
+
+/* ---------------- FELOLVASÁS (Web Speech API, a telefon magyar hangjával) ---------------- */
+const TTS = (() => {
+  const ok = 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
+  let voices = [], queue = [], timer = null, active = false, onDone = null, wake = null;
+  function load() { if (!ok) return; voices = speechSynthesis.getVoices().filter(v => /^hu/i.test(v.lang)); if (tab === 'stats' && !active) render(); }
+  if (ok) { voices = speechSynthesis.getVoices().filter(v => /^hu/i.test(v.lang)); speechSynthesis.onvoiceschanged = load; }
+  const voice = () => voices.find(v => v.name === S.settings.voice) || voices.find(v => /hu-HU/i.test(v.lang)) || voices[0] || null;
+  const SUBS = [
+    [/!”/g, '”'], [/[„”"“]/g, ''], [/!/g, '.'],
+    [/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, ''],
+    [/SZBT-vel/g, 'személyi biztonsági tanúsítvánnyal'], [/SZBT-je/g, 'személyi biztonsági tanúsítványa'], [/SZBT-jét/g, 'személyi biztonsági tanúsítványát'],
+    [/SZBT-t/g, 'személyi biztonsági tanúsítványt'], [/SZBT-k/g, 'személyi biztonsági tanúsítványok'], [/SZBT/g, 'személyi biztonsági tanúsítvány'],
+    [/\bBV-/g, 'biztonsági vezető'], [/\bBV\b/g, 'biztonsági vezető'], [/ÁFSZ-nél/g, 'Állami Futárszolgálatnál'], [/ÁFSZ/g, 'Állami Futárszolgálat'], [/\bMH\b/g, 'Magyar Honvédség'],
+    [/(^|[\s,.;:(])([A-ZÁÉÍÓÖŐÚÜŰ]{4,})(?=[\s,.;:)]|$)/g, (m, a, w) => a + w.toLowerCase()],
+    [/([a-záéíóöőúüű])\/([a-záéíóöőúüű])/gi, '$1 vagy $2'], [/\s\/\s/g, ', illetve '], [/\bFj\./g, 'futárjegyzék'],
+    [/\bST\b/g, 'Szigorúan titkos'], [/\bKT\b/g, 'Korlátozott terjesztésű'], [/\bB\+/g, 'Bizalmas vagy magasabb'],
+    [/(^|[\s(\/,])B(?=[\s:,)\/.]|$)/g, '$1Bizalmas'], [/(^|[\s(\/,])T(?=[\s:,)\/.]|$)/g, '$1Titkos'],
+    [/\bpl\./g, 'például'], [/\bill\./g, 'illetve'], [/\bmax\./g, 'legfeljebb'], [/\bkb\./g, 'körülbelül'], [/\bstb\./g, 'és így tovább'],
+    [/\bpld\./g, 'példány'], [/\bsoksz\./g, 'sokszorosított'], [/\bFnyt\./g, 'főnyilvántartási'], [/\bikt\./g, 'iktatási'], [/\bsz\./g, 'számú'],
+    [/Korm\. r(endelet)?\.?/g, 'kormányrendelet'], [/\btv\./g, 'törvény'], [/§/g, ' paragrafus'], [/Σ\s*/g, 'összesen '],
+    [/\b1\s*×\s*/g, 'egyszer '], [/\b2\s*×\s*/g, 'kétszer '], [/×/g, 'szor'], [/→/g, ', majd '], [/≥/g, 'legalább '], [/\s[–—-]\s/g, ', '],
+    [/[()]/g, ', '], [/\s\+\s/g, ' és '], [/\s+,/g, ','], [/,\s*([,.;])/g, '$1'], [/\s{2,}/g, ' ']
+  ];
+  function prep(t) { let s = ' ' + t + ' '; for (const [a, b] of SUBS) s = s.replace(a, b); return s.trim(); }
+  function chunks(t) { // hosszú szövegeket mondatokra bontunk (egyes böngészők elakadnak a hosszú felolvasáson)
+    const parts = t.split(/(?<=[.;:?])\s+/), out = []; let cur = '';
+    for (const p of parts) { if ((cur + ' ' + p).length > 180 && cur) { out.push(cur); cur = p; } else cur = cur ? cur + ' ' + p : p; }
+    if (cur) out.push(cur); return out;
+  }
+  async function lock() { try { if ('wakeLock' in navigator && !wake) wake = await navigator.wakeLock.request('screen'); } catch (e) {} }
+  function unlock() { try { wake && wake.release(); } catch (e) {} wake = null; }
+  function stop() { active = false; queue = []; clearTimeout(timer); onDone = null; if (ok) speechSynthesis.cancel(); unlock(); document.querySelectorAll('.spk.on').forEach(b => b.classList.remove('on')); }
+  function play(items, done, btn) {
+    if (!ok) { toast('Ez a böngésző nem tud felolvasni 😕'); return; }
+    stop(); active = true; onDone = done || null; queue = items.slice(); lock();
+    if (btn) btn.classList.add('on');
+    if (!voices.length) toast('Nem találok magyar hangot – lásd Mizu? › Felolvasás');
+    step();
+  }
+  function step() {
+    if (!active) return;
+    const it = queue.shift();
+    if (it === undefined) { active = false; unlock(); document.querySelectorAll('.spk.on').forEach(b => b.classList.remove('on')); const d = onDone; onDone = null; if (d) d(); return; }
+    if (typeof it === 'object') { timer = setTimeout(step, it.pause); return; }
+    const cs = chunks(prep(it)); if (!cs.length) return step();
+    if (cs.length > 1) { queue.unshift(...cs.slice(1)); }
+    const u = new SpeechSynthesisUtterance(cs[0]); const v = voice(); if (v) u.voice = v;
+    u.lang = 'hu-HU'; u.rate = S.settings.rate || 1;
+    u.onend = () => step(); u.onerror = () => { if (active) setTimeout(step, 50); };
+    speechSynthesis.speak(u);
+  }
+  // a már előkészített szövegrészeket ne bontsuk újra: a chunks kimenete már prep-elt, a prep idempotens elég
+  return { ok, play, stop, voices: () => voices, get active() { return active; } };
+})();
+const spkBtn = (id, extra) => `<button class="spk" id="${id}" title="Felolvasás" ${extra || ''}>🔊</button>`;
+
 /* ---------------- navigáció ---------------- */
 let tab = 'home';
 document.querySelectorAll('.tabbar button').forEach(b => b.onclick = () => go(b.dataset.tab));
 function go(t) {
   if (SES && !SES.done && t !== 'quiz') { if (!confirm('Abbahagyod ezt a kört? Az eddigi válaszaid megmaradnak.')) return; SES = null; }
+  TTS.stop(); LS = null;
   tab = t;
   document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
   render(); window.scrollTo(0, 0);
@@ -168,12 +226,13 @@ function topicsHTML() {
 let tetKind = 'szobeli', tetOpen = null, tetReveal = false;
 function tetKey(t) { return t.kind + t.n; }
 function tetelekHTML() {
+  if (LS) return listenHTML();
   if (tetOpen) return tetelCardHTML();
   const list = TETELEK.filter(t => t.kind === tetKind);
   const R = { 2: '😎', 1: '🤔', 0: '😵' };
   return `<h2>Tételek</h2>
   <div class="seg"><button data-kind="szobeli" class="${tetKind === 'szobeli' ? 'on' : ''}">Szóbeli (22)</button><button data-kind="gyak" class="${tetKind === 'gyak' ? 'on' : ''}">Gyakorlati (17)</button></div>
-  <button class="btn primary block" data-act="draw">🎴 Húzz egy tételt!</button>
+  <div class="row"><button class="btn primary" data-act="draw">🎴 Húzz egy tételt!</button><button class="btn brand" data-act="listen">🎧 Hallgatós mód</button></div>
   <p class="muted small">Gondold végig vagy mondd el hangosan, aztán nézd meg a vázlatot, és értékeld magad. A húzás azokat hozza előbb, amelyek még nem mentek.</p>
   <section class="card tlist">${list.map(t => { const r = S.tet[tetKey(t)]; return `
     <div class="t" data-tet="${tetKey(t)}"><span class="no">${t.n}.</span><span class="tx">${esc(t.q)}</span><span>${r != null ? R[r] : '·'}</span></div>`; }).join('')}
@@ -183,11 +242,11 @@ function tetelCardHTML() {
   const t = tetOpen;
   return `<button class="btn ghost" data-act="tetback">‹ Vissza</button>
   <section class="card tetel pop" style="margin-top:12px">
-    <span class="pill">${t.kind === 'szobeli' ? 'Szóbeli' : 'Gyakorlati'} ${t.n}. tétel</span>
+    <div class="qhead" style="margin:0"><span class="pill">${t.kind === 'szobeli' ? 'Szóbeli' : 'Gyakorlati'} ${t.n}. tétel</span>${spkBtn('spkTet')}</div>
     <p class="q">${esc(t.q)}</p>
     ${tetReveal ? `<h3>Vázlat</h3><ul>${t.v.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
       <p class="muted small">Hogy ment?</p>
-      <div class="row"><button class="btn" data-rate="0">😵 Nem ment</button><button class="btn" data-rate="1">🤔 Részben</button><button class="btn" data-rate="2">😎 Tudtam</button></div>`
+      <div class="row"><button class="btn" data-grade="0">😵 Nem ment</button><button class="btn" data-grade="1">🤔 Részben</button><button class="btn" data-grade="2">😎 Tudtam</button></div>`
       : `<p class="muted">Gondold végig: mik a fő pontok? Ha megvan, nézd meg a vázlatot.</p>
       <button class="btn brand block" data-act="reveal">👀 Mutasd a vázlatot</button>`}
   </section>
@@ -199,6 +258,50 @@ function drawTetel() {
   let sum = w.reduce((a, x) => a + x.w, 0), r = Math.random() * sum;
   for (const x of w) { r -= x.w; if (r <= 0) return x.t; }
   return list[0];
+}
+
+
+/* ---------------- HALLGATÓS MÓD ---------------- */
+let LS = null;
+const kindName = k => k === 'szobeli' ? 'Szóbeli' : 'Gyakorlati';
+function listenStart() { LS = { list: TETELEK.filter(t => t.kind === tetKind), pos: 0, playing: false, phase: '' }; render(); window.scrollTo(0, 0); }
+function listenPlay() {
+  const t = LS.list[LS.pos]; LS.playing = true; LS.phase = 'kérdés';
+  const p = S.settings.pause;
+  const items = [kindName(t.kind) + ' ' + t.n + '. tétel.', t.q];
+  if (p) items.push({ pause: p * 1000 });
+  items.push('Vázlat.');
+  t.v.forEach(x => { items.push(x, { pause: 700 }); });
+  items.push({ pause: 1500 });
+  renderListen();
+  setTimeout(() => { if (LS && LS.playing) { LS.phase = 'vázlat'; } }, 0);
+  TTS.play(items, () => {
+    if (!LS) return;
+    if (LS.pos < LS.list.length - 1) { LS.pos++; listenPlay(); }
+    else { LS.playing = false; renderListen(); toast('Végére értél 🎉'); }
+  });
+}
+function renderListen() { if (tab === 'tetelek' && LS) { $('#view').innerHTML = listenHTML(); bind(); } }
+function listenHTML() {
+  const t = LS.list[LS.pos];
+  return `<button class="btn ghost" data-act="listenexit">‹ Vissza a tételekhez</button>
+  <section class="card tetel" style="margin-top:12px">
+    <div class="qhead" style="margin:0"><span class="pill">🎧 ${kindName(t.kind)} ${t.n}. tétel • ${LS.pos + 1}/${LS.list.length}</span>${LS.playing ? '<span class="pill new">▶ szól</span>' : ''}</div>
+    <p class="q">${esc(t.q)}</p>
+    <details ${LS.playing ? '' : 'open'}><summary class="small muted">Vázlat mutatása</summary><ul>${t.v.map(x => `<li>${esc(x)}</li>`).join('')}</ul></details>
+  </section>
+  <div class="row player">
+    <button class="btn" data-act="lprev" ${LS.pos ? '' : 'disabled'}>⏮</button>
+    <button class="btn primary" data-act="lplay" style="flex:2">${LS.playing ? '⏸ Szünet' : '▶️ Lejátszás'}</button>
+    <button class="btn" data-act="lnext" ${LS.pos < LS.list.length - 1 ? '' : 'disabled'}>⏭</button>
+  </div>
+  <section class="card" style="margin-top:12px">
+    <p class="small muted" style="margin:0 0 6px">Gondolkodási szünet a kérdés után (közben felelj magadban!)</p>
+    <div class="seg">${[0, 5, 15, 30].map(n => `<button data-pause="${n}" class="${S.settings.pause === n ? 'on' : ''}">${n ? n + ' mp' : 'nincs'}</button>`).join('')}</div>
+    <p class="small muted" style="margin:0 0 6px">Sebesség</p>
+    <div class="seg">${[0.8, 1, 1.2, 1.4].map(n => `<button data-rate="${n}" class="${S.settings.rate === n ? 'on' : ''}">${n}×</button>`).join('')}</div>
+    <p class="small muted" style="margin:0">Sorban felolvassa az összes ${kindName(LS.list[0].kind).toLowerCase()} tételt: cím, kérdés, szünet, majd a vázlat. Lejátszás közben ébren tartja a képernyőt; ha lezárod a telefont, a felolvasás megállhat.</p>
+  </section>`;
 }
 
 /* ---------------- STATISZTIKA ---------------- */
@@ -232,6 +335,11 @@ function statsHTML() {
   <section class="card"><h3>Beállítások</h3>
     <p class="small muted" style="margin:0 0 6px">Kérdések egy körben</p>
     <div class="seg">${[5, 8, 12, 15].map(n => `<button data-len="${n}" class="${S.settings.len === n ? 'on' : ''}">${n}</button>`).join('')}</div>
+    <p class="small muted" style="margin:0 0 6px">Felolvasás sebessége</p>
+    <div class="seg">${[0.8, 1, 1.2, 1.4].map(n => `<button data-rate="${n}" class="${S.settings.rate === n ? 'on' : ''}">${n}×</button>`).join('')}</div>
+    ${TTS.voices().length > 1 ? `<p class="small muted" style="margin:0 0 6px">Magyar hang</p><select id="voiceSel" class="sel">${TTS.voices().map(v => `<option ${v.name === S.settings.voice ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select>` : ''}
+    ${!TTS.ok ? '<p class="small" style="color:var(--bad)">Ez a böngésző nem tud felolvasni.</p>' : !TTS.voices().length ? '<p class="small" style="color:var(--bad)">Nem találok magyar felolvasóhangot. iPhone: Beállítások › Kisegítő lehetőségek › Beszélt tartalom › Hangok › Magyar. Android: Beállítások › Kisegítő lehetőségek › Szövegfelolvasó › Google › Hanganyag telepítése › Magyar.</p>' : ''}
+    <button class="btn ghost block" data-act="ttstest" style="margin:6px 0 14px">🔊 Hang kipróbálása</button>
     <p class="small muted" style="margin:0 0 6px">Vizsga napja (visszaszámláláshoz)</p>
     <input type="date" id="examDate" value="${esc(S.settings.exam)}">
     <div class="row" style="margin-top:14px">
@@ -250,21 +358,30 @@ function bind() {
   document.querySelectorAll('[data-topic]').forEach(b => b.onclick = e => { e.stopPropagation(); startSession({ topic: b.dataset.topic, title: TOPIC[b.dataset.topic].name }); });
   document.querySelectorAll('[data-kind]').forEach(b => b.onclick = () => { tetKind = b.dataset.kind; render(); });
   document.querySelectorAll('[data-tet]').forEach(b => b.onclick = () => { tetOpen = TETELEK.find(t => tetKey(t) === b.dataset.tet); tetReveal = false; render(); window.scrollTo(0, 0); });
-  document.querySelectorAll('[data-rate]').forEach(b => b.onclick = () => {
-    const r = +b.dataset.rate; const k = tetKey(tetOpen);
+  document.querySelectorAll('[data-grade]').forEach(b => b.onclick = () => {
+    const r = +b.dataset.grade; const k = tetKey(tetOpen);
     S.tet[k] = r; S.xp += r === 2 ? 8 : r === 1 ? 5 : 3; markDay(); save();
     toast(r === 2 ? '😎 Szuper! ' + pick(PRAISE) : r === 1 ? '🤔 Majd visszahozom még.' : '😵 Ezt hamarosan újra kihúzod.');
     tetOpen = drawTetel(); tetReveal = false; render(); window.scrollTo(0, 0);
   });
   document.querySelectorAll('[data-len]').forEach(b => b.onclick = () => { S.settings.len = +b.dataset.len; save(); render(); });
+  document.querySelectorAll('[data-rate]').forEach(b => b.onclick = () => { S.settings.rate = +b.dataset.rate; save(); if (LS) renderListen(); else render(); });
+  document.querySelectorAll('[data-pause]').forEach(b => b.onclick = () => { S.settings.pause = +b.dataset.pause; save(); renderListen(); });
+  const vs = $('#voiceSel'); if (vs) vs.onchange = () => { S.settings.voice = vs.value; save(); };
+  const st = $('#spkTet'); if (st) st.onclick = () => { if (TTS.active) return TTS.stop(); const t = tetOpen; TTS.play([kindName(t.kind) + ' ' + t.n + '. tétel.', t.q].concat(tetReveal ? ['Vázlat.'].concat(t.v) : []), null, st); };
   const ed = $('#examDate'); if (ed) ed.onchange = () => { S.settings.exam = ed.value; save(); toast('Vizsganap elmentve ✔'); };
 }
 function act(a) {
   if (a === 'start') startSession({ title: 'Mai kör' });
   else if (a === 'mistakes') startSession({ mode: 'mistakes', title: 'Hibáim' });
   else if (a === 'draw') { tab = 'tetelek'; document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab === 'tetelek')); tetOpen = drawTetel(); tetReveal = false; render(); window.scrollTo(0, 0); }
-  else if (a === 'reveal') { tetReveal = true; render(); }
-  else if (a === 'tetback') { tetOpen = null; render(); }
+  else if (a === 'reveal') { TTS.stop(); tetReveal = true; render(); }
+  else if (a === 'listen') { TTS.stop(); listenStart(); }
+  else if (a === 'listenexit') { TTS.stop(); LS = null; render(); }
+  else if (a === 'lplay') { if (LS.playing) { TTS.stop(); LS.playing = false; renderListen(); } else listenPlay(); }
+  else if (a === 'lprev' || a === 'lnext') { const was = LS.playing; TTS.stop(); LS.pos += a === 'lnext' ? 1 : -1; LS.playing = false; if (was) listenPlay(); else renderListen(); }
+  else if (a === 'ttstest') TTS.play(['Szia! Így fogok felolvasni. A Szigorúan titkos minősítési szintű adat érvényességi ideje legfeljebb 30 év.']);
+  else if (a === 'tetback') { TTS.stop(); tetOpen = null; render(); }
   else if (a === 'reset') { if (confirm('Biztosan törlöd az összes haladást? Ez nem vonható vissza.')) { S = structuredClone(DEF); save(); render(); toast('Törölve'); } }
   else if (a === 'export') {
     const blob = new Blob([JSON.stringify(S)], { type: 'application/json' });
@@ -307,7 +424,7 @@ function renderQuiz() {
   <div class="progress"><i style="width:${(SES.i) / n * 100}%"></i></div>
   <section class="card pop" id="qcard">
     <div class="row" style="gap:6px;margin-bottom:4px"><span class="pill">${T.icon} ${esc(T.name)}</span>${q.ch ? '<span class="pill new">🆕 2026-os változás</span>' : ''}${!(S.q[q.id] && S.q[q.id].seen) ? '<span class="pill">új</span>' : ''}</div>
-    <div class="qtext">${esc(q.q)}</div>
+    <div class="qtextrow"><div class="qtext">${esc(q.q)}</div>${spkBtn('spkQ')}</div>
     <div id="ans">${answerHTML()}</div>
     ${CUR.checked ? explHTML() : ''}
   </section>
@@ -395,7 +512,7 @@ function canCheck() {
 }
 function bindQuiz() {
   const q = CUR.q;
-  $('#quit').onclick = () => { if (confirm('Kilépsz a körből? Az eddigi válaszaid megmaradnak.')) { SES = null; go('home'); } };
+  $('#quit').onclick = () => { TTS.stop(); if (confirm('Kilépsz a körből? Az eddigi válaszaid megmaradnak.')) { SES = null; go('home'); } };
   document.querySelectorAll('[data-o]').forEach(b => b.onclick = () => {
     const i = +b.dataset.o;
     if (q.type === 'mc') { CUR.sel = new Set([i]); } else { CUR.sel.has(i) ? CUR.sel.delete(i) : CUR.sel.add(i); }
@@ -411,6 +528,7 @@ function bindQuiz() {
   const s = $('#show'); if (s) s.onclick = () => check(true);
   const r = $('#retry'); if (r) r.onclick = () => { newQ(); renderQuiz(); };
   const n = $('#next'); if (n) n.onclick = next;
+  const sq = $('#spkQ'); if (sq) sq.onclick = () => { if (TTS.active) return TTS.stop(); TTS.play(quizSpeech(), null, sq); };
 }
 function refreshAns() { $('#ans').innerHTML = answerHTML(); refreshActions(); bindQuiz(); }
 function refreshActions() { document.querySelector('.actions').innerHTML = actionsHTML(); const c = $('#check'); if (c) c.onclick = () => check(false); const s = $('#show'); if (s) s.onclick = () => check(true); }
@@ -458,7 +576,22 @@ function check(show) {
   if (CUR.correct && SES.combo > 0 && SES.combo % 5 === 0) toast('🔥 ' + SES.combo + ' jó válasz egymás után!');
   setTimeout(() => { const e = document.querySelector('.expl'); if (e) e.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 60);
 }
+function quizSpeech() {
+  const q = CUR.q;
+  if (CUR.checked) {
+    const head = CUR.shown ? 'A megoldás.' : CUR.correct ? 'Helyes.' : 'Nem egészen.';
+    return [head, q.e];
+  }
+  const out = [q.q];
+  if (q.type === 'mc' || q.type === 'multi') CUR.perm.forEach((i, k) => out.push((k + 1) + '. válasz: ' + q.o[i] + '.'));
+  if (q.type === 'tf') out.push('Igaz vagy hamis?');
+  if (q.type === 'cloze') out.push(q.text.replace(/\{\d+\}/g, ' pötty pötty pötty '));
+  if (q.type === 'match') q.pairs.forEach(p => out.push(p[0] + '.'));
+  if (q.type === 'order') out.push('Állítsd sorrendbe a lépéseket.');
+  return out;
+}
 function next() {
+  TTS.stop();
   if (SES.i >= SES.ids.length - 1) return finish();
   SES.i++; CUR = null; newQ(); renderQuiz(); window.scrollTo(0, 0);
 }

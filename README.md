@@ -15,6 +15,7 @@ Telefonon is használható gyakorlóoldal a titkos ügykezelői vizsgához (2026
 - **Témák**: 16 téma, a szóbeli és gyakorlati tételekhez kötve.
 - **Tételek**: 22 szóbeli és 17 gyakorlati tétel vázlattal. Húzhatsz egyet, aztán értékeled magad.
 - **Mizu?**: haladás témánként, vizsga-visszaszámláló, beállítások, és a haladás mentése/betöltése fájlba.
+- **Felolvasás**: 🔊 gomb a kérdéseknél és a tételeknél, és a **🎧 Hallgatós mód** sorban felolvassa a tételeket (cím, kérdés, gondolkodási szünet, vázlat). A telefon beépített magyar hangját használja (iPhone: Beállítások › Kisegítő lehetőségek › Beszélt tartalom › Hangok › Magyar; Android: Szövegfelolvasó › Google › Magyar hanganyag).
 - 🆕 jelöli a 2026-os változásokat érintő kérdéseket.
 
 ## Kérdés hozzáadása
