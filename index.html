@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f3a5f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>TÜK gyakorló</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">🔐 TÜK gyakorló</div>
+  <div class="chips">
+    <span class="chip" id="chipStreak" title="Napi sorozat">🔥 0</span>
+    <span class="chip" id="chipXp" title="Tapasztalati pont">⭐ 0</span>
+  </div>
+</header>
+
+<main id="view"></main>
+
+<nav class="tabbar" id="tabbar">
+  <button data-tab="home" class="active"><span>🏠</span>Ma</button>
+  <button data-tab="topics"><span>📚</span>Témák</button>
+  <button data-tab="tetelek"><span>🎴</span>Tételek</button>
+  <button data-tab="stats"><span>📊</span>Mizu?</button>
+</nav>
+
+<div id="toast" class="toast"></div>
+<canvas id="confetti"></canvas>
+
+<script src="data-elmelet.js"></script>
+<script src="data-gyakorlat.js"></script>
+<script src="data-feladatok.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
