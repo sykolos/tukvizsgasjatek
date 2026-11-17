@@ -4,7 +4,7 @@ Telefonon is használható gyakorlóoldal a titkos ügykezelői vizsgához (2026
 
 ## Feltöltés GitHub Pages-re
 1. Hozz létre egy új repót a GitHubon (pl. `tuk-gyakorlo`).
-2. Töltsd fel a repó gyökerébe ezt a 6 fájlt: `index.html`, `style.css`, `app.js`, `data-elmelet.js`, `data-gyakorlat.js`, `data-feladatok.js` (*Add file → Upload files*).
+2. Töltsd fel a repó gyökerébe ezt a 7 fájlt: `index.html`, `style.css`, `app.js`, `data-elmelet.js`, `data-gyakorlat.js`, `data-feladatok.js`, `data-tetelek.js` (*Add file → Upload files*).
 3. *Settings → Pages → Source: Deploy from a branch → main / (root) → Save*.
 4. Pár perc múlva megnyílik: `https://<felhasználónév>.github.io/tuk-gyakorlo/`.
 5. Telefonon: *Megosztás → Hozzáadás a kezdőképernyőhöz*, és úgy indul, mint egy app.

@@ -143,3 +143,10 @@ input[type=date]{font:inherit;padding:10px;border-radius:10px;border:1.5px solid
 .sel{width:100%;font:inherit;padding:10px;border-radius:10px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);margin-bottom:10px}
 .player .btn{font-size:20px}
 details summary{cursor:pointer;margin:6px 0}
+.kw{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 10px}
+.kw span{background:var(--warnbg);color:var(--accent);font-weight:700;font-size:13px;border-radius:999px;padding:3px 9px}
+.note{border-radius:10px;padding:9px 12px;margin:8px 0;font-size:14px;border-left:4px solid}
+.note.warn{background:var(--warnbg);border-color:var(--gold)}
+.note.okn{background:var(--okbg);border-color:var(--ok)}
+.note.badn{background:var(--badbg);border-color:var(--bad)}
+.tetel ol{padding-left:22px}
