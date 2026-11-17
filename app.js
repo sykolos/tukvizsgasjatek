@@ -140,7 +140,7 @@ let tab = 'home';
 document.querySelectorAll('.tabbar button').forEach(b => b.onclick = () => go(b.dataset.tab));
 function go(t) {
   if (SES && !SES.done && t !== 'quiz') { if (!confirm('Abbahagyod ezt a kört? Az eddigi válaszaid megmaradnak.')) return; SES = null; }
-  TTS.stop(); LS = null;
+  TTS.stop(); audStop(); LS = null;
   tab = t;
   document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
   render(); window.scrollTo(0, 0);
@@ -295,24 +295,50 @@ function tetSpeech(t, withBody, thinkPause) {
 let LS = null;
 const kindName = k => k === 'szobeli' ? 'Szóbeli' : 'Gyakorlati';
 function listenStart() { LS = { list: TETELEK.filter(t => t.kind === tetKind), pos: 0, playing: false, phase: '' }; render(); window.scrollTo(0, 0); }
+// Ha a repóban van "audio" mappa (hangoskonyv.py-vel készült MP3-ak), azt játssza; ha nincs, a telefon hangjával olvas.
+const AUD = new Audio(); AUD.preload = 'auto';
+let audTimer = null, audOK = null; // null = még nem tudjuk, true/false = van/nincs hangfájl
+const audId = t => (t.kind === 'szobeli' ? 'szobeli' : 'gyak') + '-' + String(t.n).padStart(2, '0');
+function audStop() { clearTimeout(audTimer); AUD.onended = AUD.onerror = null; try { AUD.pause(); } catch (e) {} }
+function audPlay(src, onend, onfail) {
+  AUD.onended = onend; AUD.onerror = () => { AUD.onerror = null; onfail(); };
+  AUD.src = src; AUD.playbackRate = Math.max(0.8, Math.min(1.3, (S.settings.rate || 0.95) / 0.95));
+  const pr = AUD.play(); if (pr && pr.catch) pr.catch(() => onfail());
+}
+function mediaSession(t) {
+  try {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({ title: kindName(t.kind) + ' ' + t.n + '. tétel', artist: 'TÜK hangoskönyv', album: t.q });
+    navigator.mediaSession.setActionHandler('nexttrack', () => act('lnext'));
+    navigator.mediaSession.setActionHandler('previoustrack', () => act('lprev'));
+    navigator.mediaSession.setActionHandler('pause', () => { if (LS && LS.playing) act('lplay'); });
+    navigator.mediaSession.setActionHandler('play', () => { if (LS && !LS.playing) act('lplay'); });
+  } catch (e) {}
+}
+function listenNext() {
+  if (!LS) return;
+  if (LS.pos < LS.list.length - 1) { LS.pos++; listenPlay(); }
+  else { LS.playing = false; renderListen(); toast('Végére értél 🎉'); }
+}
 function listenPlay() {
-  const t = LS.list[LS.pos]; LS.playing = true; LS.phase = 'kérdés';
+  const t = LS.list[LS.pos]; LS.playing = true;
   const p = S.settings.pause;
-  const items = tetSpeech(t, true, p * 1000).concat([{ pause: 1800 }]);
-  renderListen();
-  setTimeout(() => { if (LS && LS.playing) { LS.phase = 'vázlat'; } }, 0);
-  TTS.play(items, () => {
-    if (!LS) return;
-    if (LS.pos < LS.list.length - 1) { LS.pos++; listenPlay(); }
-    else { LS.playing = false; renderListen(); toast('Végére értél 🎉'); }
-  });
+  mediaSession(t);
+  const viaTTS = () => { audOK = false; LS.mp3 = false; renderListen(); TTS.play(tetSpeech(t, true, p * 1000).concat([{ pause: 1800 }]), listenNext); };
+  if (audOK === false) return viaTTS();
+  const base = 'audio/' + audId(t);
+  LS.mp3 = true; renderListen();
+  audPlay(base + '-a.mp3', () => {
+    audOK = true; LS.mp3 = true; renderListen();
+    audTimer = setTimeout(() => { if (LS && LS.playing) audPlay(base + '-b.mp3', () => { audTimer = setTimeout(listenNext, 1800); }, viaTTS); }, p * 1000 + 400);
+  }, viaTTS);
 }
 function renderListen() { if (tab === 'tetelek' && LS) { $('#view').innerHTML = listenHTML(); bind(); } }
 function listenHTML() {
   const t = LS.list[LS.pos];
   return `<button class="btn ghost" data-act="listenexit">‹ Vissza a tételekhez</button>
   <section class="card tetel" style="margin-top:12px">
-    <div class="qhead" style="margin:0"><span class="pill">🎧 ${kindName(t.kind)} ${t.n}. tétel • ${LS.pos + 1}/${LS.list.length}</span>${LS.playing ? '<span class="pill new">▶ szól</span>' : ''}</div>
+    <div class="qhead" style="margin:0"><span class="pill">🎧 ${kindName(t.kind)} ${t.n}. tétel • ${LS.pos + 1}/${LS.list.length}</span>${LS.playing ? `<span class="pill new">▶ ${LS.mp3 ? 'hangoskönyv' : 'felolvasás'}</span>` : ''}</div>
     <p class="q">${esc(t.q)}</p>
     <details ${LS.playing ? '' : 'open'}><summary class="small muted">Vázlat mutatása</summary>${tetBodyHTML(t)}</details>
   </section>
@@ -326,7 +352,7 @@ function listenHTML() {
     <div class="seg">${[0, 5, 15, 30].map(n => `<button data-pause="${n}" class="${S.settings.pause === n ? 'on' : ''}">${n ? n + ' mp' : 'nincs'}</button>`).join('')}</div>
     <p class="small muted" style="margin:0 0 6px">Sebesség</p>
     <div class="seg">${[0.8, 0.95, 1.1, 1.3].map(n => `<button data-rate="${n}" class="${S.settings.rate === n ? 'on' : ''}">${n}×</button>`).join('')}</div>
-    <p class="small muted" style="margin:0">Sorban felolvassa az összes ${kindName(LS.list[0].kind).toLowerCase()} tételt: cím, kérdés, szünet, majd a vázlat. Lejátszás közben ébren tartja a képernyőt; ha lezárod a telefont, a felolvasás megállhat.</p>
+    <p class="small muted" style="margin:0">Sorban felolvassa az összes ${kindName(LS.list[0].kind).toLowerCase()} tételt: cím, kérdés, szünet, majd a vázlat. Ha a repóban van „audio” mappa (hangoskonyv.py), természetes hangú MP3-at játszik – ez lezárt képernyővel is szól. Enélkül a telefon beépített hangjával olvas fel, ami lezárt képernyőnél megállhat.</p>
   </section>`;
 }
 
@@ -386,7 +412,7 @@ function bind() {
   document.querySelectorAll('[data-tet]').forEach(b => b.onclick = () => { tetOpen = TETELEK.find(t => tetKey(t) === b.dataset.tet); tetReveal = false; render(); window.scrollTo(0, 0); });
   document.querySelectorAll('[data-grade]').forEach(b => b.onclick = () => {
     const r = +b.dataset.grade; const k = tetKey(tetOpen);
-    S.tet[k] = r; S.xp += r === 2 ? 8 : r === 1 ? 5 : 3; markDay(); save();
+    TTS.stop(); audStop(); S.tet[k] = r; S.xp += r === 2 ? 8 : r === 1 ? 5 : 3; markDay(); save();
     toast(r === 2 ? '😎 Szuper! ' + pick(PRAISE) : r === 1 ? '🤔 Majd visszahozom még.' : '😵 Ezt hamarosan újra kihúzod.');
     tetOpen = drawTetel(); tetReveal = false; render(); window.scrollTo(0, 0);
   });
@@ -394,20 +420,28 @@ function bind() {
   document.querySelectorAll('[data-rate]').forEach(b => b.onclick = () => { S.settings.rate = +b.dataset.rate; save(); if (LS) renderListen(); else render(); });
   document.querySelectorAll('[data-pause]').forEach(b => b.onclick = () => { S.settings.pause = +b.dataset.pause; save(); renderListen(); });
   const vs = $('#voiceSel'); if (vs) vs.onchange = () => { S.settings.voice = vs.value; save(); };
-  const st = $('#spkTet'); if (st) st.onclick = () => { if (TTS.active) return TTS.stop(); const t = tetOpen; TTS.play(tetSpeech(t, tetReveal, 0), null, st); };
+  const st = $('#spkTet'); if (st) st.onclick = () => {
+    if (TTS.active || !AUD.paused) { TTS.stop(); audStop(); st.classList.remove('on'); return; }
+    const t = tetOpen, base = 'audio/' + audId(t);
+    const tts = () => { audOK = false; TTS.play(tetSpeech(t, tetReveal, 0), null, st); };
+    if (audOK === false) return tts();
+    st.classList.add('on');
+    const done = () => st.classList.remove('on');
+    audPlay(base + '-a.mp3', () => { audOK = true; if (tetReveal) audPlay(base + '-b.mp3', done, tts); else done(); }, tts);
+  };
   const ed = $('#examDate'); if (ed) ed.onchange = () => { S.settings.exam = ed.value; save(); toast('Vizsganap elmentve ✔'); };
 }
 function act(a) {
   if (a === 'start') startSession({ title: 'Mai kör' });
   else if (a === 'mistakes') startSession({ mode: 'mistakes', title: 'Hibáim' });
   else if (a === 'draw') { tab = 'tetelek'; document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab === 'tetelek')); tetOpen = drawTetel(); tetReveal = false; render(); window.scrollTo(0, 0); }
-  else if (a === 'reveal') { TTS.stop(); tetReveal = true; render(); }
+  else if (a === 'reveal') { TTS.stop(); audStop(); tetReveal = true; render(); }
   else if (a === 'listen') { TTS.stop(); listenStart(); }
-  else if (a === 'listenexit') { TTS.stop(); LS = null; render(); }
-  else if (a === 'lplay') { if (LS.playing) { TTS.stop(); LS.playing = false; renderListen(); } else listenPlay(); }
-  else if (a === 'lprev' || a === 'lnext') { const was = LS.playing; TTS.stop(); LS.pos += a === 'lnext' ? 1 : -1; LS.playing = false; if (was) listenPlay(); else renderListen(); }
+  else if (a === 'listenexit') { TTS.stop(); audStop(); LS = null; render(); }
+  else if (a === 'lplay') { if (LS.playing) { TTS.stop(); audStop(); LS.playing = false; renderListen(); } else listenPlay(); }
+  else if (a === 'lprev' || a === 'lnext') { if (!LS) return; const was = LS.playing; TTS.stop(); audStop(); LS.pos += a === 'lnext' ? 1 : -1; LS.playing = false; if (was) listenPlay(); else renderListen(); }
   else if (a === 'ttstest') TTS.play(['Szia! Így fogok felolvasni. A Szigorúan titkos minősítési szintű adat érvényességi ideje legfeljebb 30 év.']);
-  else if (a === 'tetback') { TTS.stop(); tetOpen = null; render(); }
+  else if (a === 'tetback') { TTS.stop(); audStop(); tetOpen = null; render(); }
   else if (a === 'reset') { if (confirm('Biztosan törlöd az összes haladást? Ez nem vonható vissza.')) { S = structuredClone(DEF); save(); render(); toast('Törölve'); } }
   else if (a === 'export') {
     const blob = new Blob([JSON.stringify(S)], { type: 'application/json' });
